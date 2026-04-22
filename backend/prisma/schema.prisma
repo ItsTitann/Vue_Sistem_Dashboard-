@@ -1,0 +1,100 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Store {
+  store_id      Int                 @id
+  store_name    String
+  city          String
+  store_type    String
+  opening_date  DateTime
+  sales         Sale[]
+  inventoryRows InventorySnapshot[]
+
+  @@map("stores")
+}
+
+model Sku {
+  sku_id        Int                 @id
+  sku_name      String
+  category      String
+  subcategory   String
+  unit_price    Decimal             @db.Decimal(12, 2)
+  cost_price    Decimal             @db.Decimal(12, 2)
+  brand         String
+  sales         Sale[]
+  inventoryRows InventorySnapshot[]
+
+  @@map("skus")
+}
+
+model Customer {
+  cust_id            Int      @id
+  age                Int
+  gender             String
+  city               String
+  loyalty_segment    String
+  preferred_channel  String
+  registration_date  DateTime
+  sales              Sale[]
+
+  @@map("customers")
+}
+
+model Promotion {
+  promo_id       Int      @id
+  promo_name     String
+  start_date     DateTime
+  end_date       DateTime
+  discount_pct   Decimal  @db.Decimal(5, 2)
+  promo_type     String
+
+  @@map("promotions")
+}
+
+model Sale {
+  id            Int       @id @default(autoincrement())
+  sale_date     DateTime
+  store_id      Int
+  sku_id        Int
+  customer_id   Int?
+  quantity      Int
+  unit_price    Decimal   @db.Decimal(12, 2)
+  total_value   Decimal   @db.Decimal(14, 2)
+  channel       String
+  discount_pct  Decimal   @db.Decimal(5, 2)
+
+  store         Store     @relation(fields: [store_id], references: [store_id])
+  sku           Sku       @relation(fields: [sku_id], references: [sku_id])
+  customer      Customer? @relation(fields: [customer_id], references: [cust_id])
+
+  @@index([sale_date])
+  @@index([store_id])
+  @@index([sku_id])
+  @@index([customer_id])
+  @@map("sales")
+}
+
+model InventorySnapshot {
+  id                Int      @id @default(autoincrement())
+  store_id          Int
+  sku_id            Int
+  stock_on_hand     Int
+  reorder_point     Int
+  safety_stock      Int
+  last_restock_date DateTime
+  snapshot_date     DateTime
+
+  store             Store    @relation(fields: [store_id], references: [store_id])
+  sku               Sku      @relation(fields: [sku_id], references: [sku_id])
+
+  @@index([snapshot_date])
+  @@index([store_id])
+  @@index([sku_id])
+  @@map("inventory_snapshots")
+}
