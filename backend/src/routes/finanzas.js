@@ -23,7 +23,7 @@ function asPageSize(value) {
 router.get('/options', async (_req, res) => {
   try {
     const [storeRows, skuRows, customerRows, channelRows, promoRows] = await Promise.all([
-      prisma.store.findMany({ select: { store_id: true }, orderBy: { store_id: 'asc' } }),
+      prisma.store.findMany({ select: { store_id: true, city: true }, orderBy: { store_id: 'asc' } }),
       prisma.sku.findMany({
         select: { sku_id: true, brand: true, category: true, subcategory: true },
         orderBy: { sku_id: 'asc' },
@@ -44,6 +44,7 @@ router.get('/options', async (_req, res) => {
 
     res.json({
       storeIds: storeRows.map((row) => row.store_id),
+      storeCities: unique(storeRows.map((row) => row.city)).sort(),
       skuIds: skuRows.map((row) => row.sku_id),
       customerIds: customerRows.map((row) => row.cust_id),
       channels: channelRows.map((row) => row.channel),
@@ -80,6 +81,10 @@ router.get('/summary', async (req, res) => {
     if (storeId) where.store_id = storeId
     if (skuId) where.sku_id = skuId
     if (customerId) where.customer_id = customerId
+
+    if (req.query.storeCity) {
+      where.store = { city: String(req.query.storeCity) }
+    }
 
     if (req.query.channel) where.channel = String(req.query.channel)
 
@@ -120,11 +125,44 @@ router.get('/summary', async (req, res) => {
       }))
     }
 
+    if (!skuId && (req.query.productSoldFilter === 'top' || req.query.productSoldFilter === 'bottom')) {
+      const productGroups = await prisma.sale.groupBy({
+        by: ['sku_id'],
+        where,
+        _sum: { quantity: true },
+      })
+
+      const sortedProducts = [...productGroups].sort((a, b) => {
+        const left = Number(a._sum.quantity || 0)
+        const right = Number(b._sum.quantity || 0)
+        return req.query.productSoldFilter === 'top' ? right - left : left - right
+      })
+
+      const targetSkuId = sortedProducts[0]?.sku_id
+      if (targetSkuId) {
+        where.sku_id = targetSkuId
+      }
+    }
+
+    if (req.query.valueFilter === 'max' || req.query.valueFilter === 'min') {
+      const targetSale = await prisma.sale.findFirst({
+        where,
+        select: { id: true },
+        orderBy: { total_value: req.query.valueFilter === 'max' ? 'desc' : 'asc' },
+      })
+
+      if (targetSale?.id) {
+        where.id = targetSale.id
+      }
+    }
+
     const [aggregates, rows] = await Promise.all([
       prisma.sale.aggregate({
         where,
         _sum: { total_value: true, quantity: true },
         _count: { id: true },
+        _max: { total_value: true },
+        _min: { total_value: true },
       }),
       prisma.sale.findMany({
         where,
@@ -139,7 +177,7 @@ router.get('/summary', async (req, res) => {
       }),
     ])
 
-    const [dailyGroups, channelGroups, skuGroups] = await Promise.all([
+    const [dailyGroups, channelGroups, skuGroups, storeGroups] = await Promise.all([
       prisma.sale.groupBy({
         by: ['sale_date'],
         where,
@@ -155,8 +193,13 @@ router.get('/summary', async (req, res) => {
       prisma.sale.groupBy({
         by: ['sku_id'],
         where,
-        _sum: { total_value: true },
+        _sum: { total_value: true, quantity: true },
         orderBy: { _sum: { total_value: 'desc' } },
+      }),
+      prisma.sale.groupBy({
+        by: ['store_id'],
+        where,
+        _sum: { total_value: true },
       }),
     ])
 
@@ -164,7 +207,7 @@ router.get('/summary', async (req, res) => {
     const skuInfo = skuIds.length
       ? await prisma.sku.findMany({
           where: { sku_id: { in: skuIds } },
-          select: { sku_id: true, category: true, brand: true },
+          select: { sku_id: true, sku_name: true, category: true, brand: true },
         })
       : []
 
@@ -184,14 +227,39 @@ router.get('/summary', async (req, res) => {
 
     const topCategory = [...categoryTotals.entries()].sort((a, b) => b[1] - a[1])[0]
     const topBrand = [...brandTotals.entries()].sort((a, b) => b[1] - a[1])[0]
+    const topProductGroup = [...skuGroups].sort(
+      (a, b) => Number(b._sum.quantity || 0) - Number(a._sum.quantity || 0),
+    )[0]
     const sortedChannelGroups = [...channelGroups].sort(
       (a, b) => Number(b._sum.total_value || 0) - Number(a._sum.total_value || 0),
     )
     const topChannel = sortedChannelGroups[0]
 
+    const storeIds = storeGroups.map((group) => group.store_id)
+    const storesInfo = storeIds.length
+      ? await prisma.store.findMany({
+          where: { store_id: { in: storeIds } },
+          select: { store_id: true, city: true },
+        })
+      : []
+
+    const storeCityMap = new Map(storesInfo.map((item) => [item.store_id, item.city || 'Sin ciudad']))
+    const cityTotals = new Map()
+
+    storeGroups.forEach((group) => {
+      const city = storeCityMap.get(group.store_id) || 'Sin ciudad'
+      const value = Number(group._sum.total_value || 0)
+      cityTotals.set(city, (cityTotals.get(city) || 0) + value)
+    })
+
+    const citySales = [...cityTotals.entries()]
+      .map(([name, sales]) => ({ name, sales }))
+      .sort((a, b) => b.sales - a.sales)
+
     const salesAmount = Number(aggregates._sum.total_value || 0)
     const soldUnits = Number(aggregates._sum.quantity || 0)
     const rowCount = Number(aggregates._count.id || 0)
+    const topProductSku = skuMap.get(topProductGroup?.sku_id)
 
     res.json({
       metrics: {
@@ -206,6 +274,15 @@ router.get('/summary', async (req, res) => {
         topChannel: topChannel
           ? { name: topChannel.channel || 'Sin canal', sales: Number(topChannel._sum.total_value || 0) }
           : { name: 'Sin dato', sales: 0 },
+        topProduct: topProductGroup
+          ? {
+              name: topProductSku?.sku_name || `SKU ${topProductGroup.sku_id}`,
+              units: Number(topProductGroup._sum.quantity || 0),
+              sales: Number(topProductGroup._sum.total_value || 0),
+            }
+          : { name: 'Sin dato', units: 0, sales: 0 },
+        maxSale: Number(aggregates._max.total_value || 0),
+        minSale: Number(aggregates._min.total_value || 0),
       },
       pagination: {
         page,
@@ -226,6 +303,7 @@ router.get('/summary', async (req, res) => {
           name: group.channel || 'Sin canal',
           sales: Number(group._sum.total_value || 0),
         })),
+        citySales,
       },
       rows,
     })

@@ -14,6 +14,7 @@ const pagination = reactive({
 })
 const options = ref({
   storeIds: [],
+  storeCities: [],
   skuIds: [],
   customerIds: [],
   channels: [],
@@ -29,8 +30,11 @@ const filters = reactive({
   dateTo: '',
   customerId: '',
   skuId: '',
+  storeCity: '',
   channel: '',
   customerStatus: '',
+  productSoldFilter: '',
+  valueFilter: '',
   brand: '',
   category: '',
   subcategory: '',
@@ -43,8 +47,11 @@ const defaultFilters = {
   dateTo: '',
   customerId: '',
   skuId: '',
+  storeCity: '',
   channel: '',
   customerStatus: '',
+  productSoldFilter: '',
+  valueFilter: '',
   brand: '',
   category: '',
   subcategory: '',
@@ -147,6 +154,21 @@ const salesByCategoryChart = computed(() => {
   }
 })
 
+const salesByCityChart = computed(() => {
+  const items = result.value?.analytics?.citySales || []
+
+  return {
+    labels: items.map((item) => item.name),
+    datasets: [
+      {
+        label: 'Venta por ciudad',
+        data: items.map((item) => item.sales),
+        backgroundColor: ['#2563eb', '#0ea5e9', '#14b8a6', '#f59e0b', '#8b5cf6', '#ef4444'],
+      },
+    ],
+  }
+})
+
 const salesRows = computed(() => result.value?.rows || [])
 const pageStart = computed(() => {
   if (!result.value || pagination.totalRows === 0) return 0
@@ -163,6 +185,7 @@ const summaryCards = computed(() => {
   const topChannel = result.value.metrics.topChannel
   const topCategory = result.value.metrics.topCategory
   const topBrand = result.value.metrics.topBrand
+  const topProduct = result.value.metrics.topProduct
 
   return [
     { label: 'Venta total', value: `$${result.value.metrics.salesAmount.toFixed(2)}`, note: 'Monto acumulado' },
@@ -182,6 +205,13 @@ const summaryCards = computed(() => {
       value: topBrand?.name || 'Sin dato',
       note: `$${Number(topBrand?.sales || 0).toFixed(2)} en ventas`,
     },
+    {
+      label: 'Producto más vendido',
+      value: topProduct?.name || 'Sin dato',
+      note: `${Number(topProduct?.units || 0)} unidades`,
+    },
+    { label: 'Venta máxima', value: `$${Number(result.value.metrics.maxSale || 0).toFixed(2)}`, note: 'Transacción más alta' },
+    { label: 'Venta mínima', value: `$${Number(result.value.metrics.minSale || 0).toFixed(2)}`, note: 'Transacción más baja' },
     { label: 'Ticket promedio', value: `$${result.value.metrics.avgTicket.toFixed(2)}`, note: 'Promedio por transacción' },
   ]
 })
@@ -196,11 +226,22 @@ const summaryCards = computed(() => {
       <input v-model="filters.dateTo" type="date" placeholder="Hasta" />
       <input v-model="filters.customerId" type="text" list="finanzas-customer-ids" placeholder="Cliente" />
       <input v-model="filters.skuId" type="text" list="finanzas-sku-ids" placeholder="SKU" />
+      <input v-model="filters.storeCity" type="text" list="finanzas-store-cities" placeholder="Ciudad de venta" />
       <input v-model="filters.channel" type="text" list="finanzas-channels" placeholder="Canal" />
       <select v-model="filters.customerStatus">
         <option value="">Registro</option>
         <option value="registered">Registrado</option>
         <option value="unregistered">No registrado</option>
+      </select>
+      <select v-model="filters.productSoldFilter">
+        <option value="">Producto (todos)</option>
+        <option value="top">Producto más vendido</option>
+        <option value="bottom">Producto menos vendido</option>
+      </select>
+      <select v-model="filters.valueFilter">
+        <option value="">Valor de venta (todos)</option>
+        <option value="max">Solo venta máxima</option>
+        <option value="min">Solo venta mínima</option>
       </select>
       <input v-model="filters.brand" type="text" list="finanzas-brands" placeholder="Marca" />
       <input v-model="filters.category" type="text" list="finanzas-categories" placeholder="Categoria" />
@@ -216,6 +257,9 @@ const summaryCards = computed(() => {
     </datalist>
     <datalist id="finanzas-sku-ids">
       <option v-for="value in options.skuIds" :key="value" :value="value" />
+    </datalist>
+    <datalist id="finanzas-store-cities">
+      <option v-for="value in options.storeCities" :key="value" :value="value" />
     </datalist>
     <datalist id="finanzas-channels">
       <option v-for="value in options.channels" :key="value" :value="value" />
@@ -269,6 +313,7 @@ const summaryCards = computed(() => {
     <div v-if="result" class="charts-grid">
       <ChartPanel type="line" title="Ventas por fecha" :data="salesByDateChart" accent="#1d4ed8" />
       <ChartPanel type="bar" title="Ventas por categoría" :data="salesByCategoryChart" accent="#0f172a" />
+      <ChartPanel type="bar" title="Ventas por ciudad" :data="salesByCityChart" accent="#0f172a" />
     </div>
 
     <h3 class="section-title">Detalle</h3>
